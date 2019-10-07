@@ -17,7 +17,24 @@ from adaptive_span import AdaptiveSpan
 
 # Size notations:
 # B = batch_size, H = hidden_size, M = block_size, L = attn_span
+# md note:M = block_size ,it is the length of sequence to process in parallel. but what  does exactly it refer to ,
+# I still don't know.
+# In the trandformer case.
+# Firstly,
+# A constant rule of the multi head attention mechanism is that the query is destination side, the tensor size of 
+# key and value must be equal, and key and value  is as source side ,
+# for example ,in self attention layer of encoder case, query=key=value
+# in self attention layer of decoder case, query is current step, key and value are previous step.
+# in encode-decoder attention case, query is decode side and it is the current step output of self attention layer in decoder.
+# key and value are output of last layer of encoder.
+# you can see the paper "A COMPARATIVE STUDY ON TRANSFORMER VS RNN IN SPEECH APPLICATIONS"
 
+# Secondly,
+# model dimension(e.g: d_model) is hidden_size and also per head attention dimension *number of heads  in multi head attention case.
+# M^Q ，M^K and M^V in multi head attention,
+# M^Q , M^K and M^V ，their size :d_model * d_model.
+#  you can see section 3.1 of the paper:"A COMPARATIVE STUDY ON TRANSFORMER VS RNN IN SPEECH APPLICATIONS"
+# in the multi head layer case, query size is (B_K) x M x D 
 
 def _skew(X, pad_value):
     """shift every row 1 step to right"""
@@ -47,11 +64,19 @@ class SeqAttention(nn.Module):
     Each token will attend to its previous fixed number of steps.
     Note that attention doesn't include the current step itself.
     """
+    """
+    md note: in order to be consitence with class MultiHeadSeqAttention(nn.Module), and easy to understand,
+     I  will add some document for this script and modified original author's document.
+    """
     def __init__(self, hidden_size, attn_span,
                  dropout, adapt_span_params, **kargs):
         nn.Module.__init__(self)
         self.dropout = nn.Dropout(dropout)
-        self.hidden_size = hidden_size # size of a single head
+        self.hidden_size = hidden_size # size of a single head, you can see the line (self.attn = SeqAttention(
+                                       # hidden_size=self.head_dim, nb_heads=nb_heads, **kargs)) 
+                                       # in class MultiHeadSeqAttention(nn.Module), 
+                                       # you will know here hidden_size is head_dim.
+                                       # head_dim is d_k in “Attention is all you need ”
         self.attn_span = attn_span
         self.adapt_span_enabled = adapt_span_params['adapt_span_enabled']
         if self.adapt_span_enabled:
@@ -59,33 +84,41 @@ class SeqAttention(nn.Module):
                                               **adapt_span_params, **kargs)
 
     def forward(self, query, key, value, key_pe):
+        # md note:in order to be consitence with class MultiHeadSeqAttention(nn.Module)
+        # md note: query size = B_K x M x D
+        #          key, value sizes = B_K x (M+L) x 
         # query size = B x M x H
         # key, value sizes = B x (M+L) x H
 
         if self.adapt_span_enabled:
             # [optional] trim out memory to reduce unnecessary computation
+            # 
             key, value, key_pe = self.adaptive_span.trim_memory(
                 query, key, value, key_pe)
 
         # compute attention from context
-        # B x M (dest) x (M+L) (src)
-        attn_cont = torch.matmul(query, key.transpose(-1, -2))
-        attn_cont = _unskew(attn_cont)  # B x M x L
+        # B_K x M (dest) x (M+L) (src)
+        attn_cont = torch.matmul(query, key.transpose(-1, -2)) # md note:key :B_K x (M+L) x D
+        attn_cont = _unskew(attn_cont)  # B_K x M x L
 
-        # compute the effect of position embedding
-        attn_pos = torch.matmul(query, key_pe)  # B x M x L_pos
-        attn = attn_cont + attn_pos
+        # compute the effect of position embedding 
+        attn_pos = torch.matmul(query, key_pe)  # B_K x M x L_pos , md note: L_pos is equal to L ,otherwise they don't add .
+                                                                  # then key_pe should be equal to key.transpose(-1,-2)
+                                                                  # key_pe : B_K x D x (M+L)
+        attn = attn_cont + attn_pos # md note: B_K x M x L_pos
 
-        attn = attn / math.sqrt(self.hidden_size)  # B x M X L_pos
+        attn = attn / math.sqrt(self.hidden_size)  # B_K x M X L_pos, md note:hidden_size is head_dim.
+                                                                    
+                                                                  
+                                                                   
         attn = F.softmax(attn, dim=-1)
-
         if self.adapt_span_enabled:
             # trim attention lengths according to the learned span
             attn = self.adaptive_span(attn)
-        attn = self.dropout(attn)  # B x M X L_pos
+        attn = self.dropout(attn)  # B x M X L_pos # md note:B_K x M X L_pos 
 
-        attn_cont = _skew(attn, 0)  # B x M X (L+M)
-        out = torch.matmul(attn_cont, value)  # B x M x H
+        attn_cont = _skew(attn, 0)  # B x M X (L+M) # md note:B_K x M x (L_pos+M)
+        out = torch.matmul(attn_cont, value)  # B x M x H ,#md note:B_K x M x D
 
         return out
 
@@ -110,11 +143,12 @@ class MultiHeadSeqAttention(nn.Module):
         self.proj_key = nn.Linear(hidden_size, hidden_size, bias=False)
 
     def head_reshape(self, x):
-        K = self.nb_heads
+        K = self.nb_heads. # hidden_size = nb_heads * head_dim ; in other words, H = K * D
         D = self.head_dim
-        x = x.view(x.size()[:-1] + (K, D))  # B x (M+L) x K x D
+        x = x.view(x.size()[:-1] + (K, D))  # md note: before x : B x (M+L) x H, after x :B x (M+L) x K x D
         x = x.transpose(1, 2).contiguous()  # B x K x (M+L) x D
-        x = x.view(-1, x.size(-2), x.size(-1))  # B_K x (M+L) x D
+        x = x.view(-1, x.size(-2), x.size(-1))  # B_K x (M+L) x D ,it should be (B+K) x M+L) x D, to order to be 
+                                                # consistent with original author symbol, i also use B_K to replace B+K.
         return x
 
     def forward(self, query, key, value, key_pe):
@@ -123,12 +157,12 @@ class MultiHeadSeqAttention(nn.Module):
         D = self.head_dim
         M = query.size(1)
 
-        query = self.proj_query(query)
-        query = self.head_reshape(query)
-        value = self.proj_val(value)
-        value = self.head_reshape(value)
-        key = self.proj_key(key)
-        key = self.head_reshape(key)
+        query = self.proj_query(query) # before query : B x M x H ,after query : B x M x H
+        query = self.head_reshape(query) # after query : (B_K) x M x D
+        value = self.proj_val(value)     #before value : B x (M+L) x H, after value: B x (M+L) x H
+        value = self.head_reshape(value) # after value : (B_K) x (M+L) x D
+        key = self.proj_key(key)         # before key : B x (M+L) x H, after key: B x (M+L) x H
+        key = self.head_reshape(key)     # after key : (B_K) x (M+L) x D
 
         out = self.attn(query, key, value, key_pe)  # B_K x M x D
         out = out.view(B, K, M, D)  # B x K x M x D
