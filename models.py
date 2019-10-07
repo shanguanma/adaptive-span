@@ -103,8 +103,7 @@ class SeqAttention(nn.Module):
 
         # compute the effect of position embedding 
         attn_pos = torch.matmul(query, key_pe)  # B_K x M x L_pos , md note: L_pos is equal to L ,otherwise they don't add .
-                                                                  # then key_pe should be equal to key.transpose(-1,-2)
-                                                                  # key_pe : B_K x D x (M+L)
+                                                                  # key_pe : B_K x D x L_pos
         attn = attn_cont + attn_pos # md note: B_K x M x L_pos
 
         attn = attn / math.sqrt(self.hidden_size)  # B_K x M X L_pos, md note:hidden_size is head_dim.
