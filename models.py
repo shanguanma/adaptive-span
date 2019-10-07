@@ -110,7 +110,7 @@ class SeqAttention(nn.Module):
                                                                     
                                                                   
                                                                    
-        attn = F.softmax(attn, dim=-1)
+        attn = F.softmax(attn, dim=-1) # md note: B_K x M 
         if self.adapt_span_enabled:
             # trim attention lengths according to the learned span
             attn = self.adaptive_span(attn)
