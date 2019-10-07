@@ -86,7 +86,7 @@ class SeqAttention(nn.Module):
     def forward(self, query, key, value, key_pe):
         # md note:in order to be consitence with class MultiHeadSeqAttention(nn.Module)
         # md note: query size = B_K x M x D
-        #          key, value sizes = B_K x (M+L) x 
+        #          key, value sizes = B_K x (M+L) x D
         # query size = B x M x H
         # key, value sizes = B x (M+L) x H
 
