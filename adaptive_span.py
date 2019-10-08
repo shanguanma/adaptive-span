@@ -109,10 +109,10 @@ class AdaptiveSpan(nn.Module):
         M = attn.size(1) # block size
         attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1) # here ,attn size should be B_K//K x K x M x L_pos 
 
-        attn = self._mask(attn)
+        attn = self._mask(attn) # attn size is B_K//K x K x M x L_pos
         attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
 
-        attn = attn.view(B, M, -1)
+        attn = attn.view(B, M, -1) # attn size is B_K x M x L_pos
         return attn
 
     def get_trim_len(self):
