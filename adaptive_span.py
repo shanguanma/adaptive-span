@@ -31,18 +31,29 @@ class AdaptiveMask(nn.Module):
         nn.Module.__init__(self)
         self._max_size = max_size
         self._ramp_size = ramp_size
-        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
-        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
+        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val) # from class AdaptiveSpan(nn.Module)
+                                                                        # we know that "shape" doesn't one element ,
+                                                                        # it is a tuple and it should contain three elements.
+                                                                        # it should be shape = (nb_heads,1,1)
+                                                                        # current_val.size() should be torch.Size([nb_heads, 1, 1])
+        mask_template = torch.linspace(1 - max_size, 0, steps=max_size) # mask_template is torch.size([max_size])
+                                                                        # for example ,max_size=4, then
+                                                                        # mask_template = tensor([-3., -2., -1.,  0.])
+                                                                         
         self.register_buffer('mask_template', mask_template)
 
     def forward(self, x):
-        mask = self.mask_template + self.current_val * self._max_size
-        mask = mask / self._ramp_size + 1
+        mask = self.mask_template + self.current_val * self._max_size. # mask size should be : nb_heads x 1 x max_size
+        mask = mask / self._ramp_size + 1 # mask size should be : nb_heads x 1 x max_size
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
-        x = x * mask
+            # acorrding to class AdaptiveSpan(nn.Module), x size should be B_K//K x K x M x L_pos, in order to consistent,
+            # because max_size = attn_span, attn_span is L ,is also L_pos, nb_heads is K ,M is block size.
+            # so x = x * mask
+            #mask size is K x 1 x L_pos
+        x = x * mask  # after x size should be B_K//K x K x M x L_pos 
         return x
 
     def get_current_max_size(self, include_ramp=True):
@@ -91,9 +102,12 @@ class AdaptiveSpan(nn.Module):
     def forward(self, attn):
         """mask attention with the right span"""
         # batch and head dimensions are merged together, so separate them first
+        # according to class SeqAttention(nn.Module): in model.py, attn size should be B_K x M x L_pos, note:B is batch size
+        # K is nb_heads, M is block size, L_pos is equal to L ,and L is attn_span.
+        
         B = attn.size(0) # batch size
         M = attn.size(1) # block size
-        attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1)
+        attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1) # here ,attn size should be B_K//K x K x M x L_pos 
 
         attn = self._mask(attn)
         attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
